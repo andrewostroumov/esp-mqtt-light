@@ -1,0 +1,8 @@
+.idea
+build
+cmake-build-debug
+sdkconfig
+sdkconfig.ci
+sdkconfig.old
+security/*
+!security/.gitkeep

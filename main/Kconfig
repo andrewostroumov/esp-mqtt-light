@@ -1,0 +1,14 @@
+menu "Configuration"
+	config WIFI_SSID
+		string "WIFI SSID"
+		help
+			Enter the wifi network SSID
+	config WIFI_PASSWORD
+		string "WIFI PASSWORD"
+		help
+			Enter the wifi network PASSWORD
+	config MQTT_URI
+		string "MQTT URI"
+		help
+			Enter the MQTT uri
+endmenu
