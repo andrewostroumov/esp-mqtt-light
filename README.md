@@ -1,7 +1,5 @@
 # Home Assistant ESP32 MQTT Light Adapter
 
-https://www.home-assistant.io/integrations/light.mqtt/
-
 This will help you to build Home Assistant MQTT adapter to control any kind of light
 
 Has build with esp-idf commit 93a8603c545fb8e54741d6685146e2f3b874378d
