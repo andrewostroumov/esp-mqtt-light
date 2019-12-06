@@ -35,6 +35,7 @@ bool DEFAULT_STATE_POWER = true;
 uint8_t DEFAULT_STATE_BRIGHTNESS = 100;
 
 #define WIFI_MAXIMUM_RETRY 15
+#define DEFAULT_BUF_SIZE 1024
 static int wifi_retry_num = 0;
 
 typedef struct {
@@ -129,11 +130,11 @@ int apply_esp_state(esp_state state, esp_state applied) {
     return EXIT_SUCCESS;
 }
 
-int handle_esp_event(esp_mqtt_event_handle_t event) {
+int handle_esp_event(char *data) {
     esp_state state = malloc(sizeof(esp_state));
     esp_state applied = malloc(sizeof(esp_state));
 
-    deserialize_esp_state(state, event->data);
+    deserialize_esp_state(state, data);
     apply_esp_state(state, applied);
     merge_esp_state(current_state, applied);
 
@@ -142,7 +143,10 @@ int handle_esp_event(esp_mqtt_event_handle_t event) {
 
 static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event)
 {
+    char topic[DEFAULT_BUF_SIZE];
+    char data[DEFAULT_BUF_SIZE];
     esp_mqtt_client_handle_t client = event->client;
+
     switch (event->event_id) {
         case MQTT_EVENT_CONNECTED:
             ESP_LOGI(TAG, "[MQTT] Connected");
@@ -152,11 +156,16 @@ static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event)
             ESP_LOGI(TAG, "[MQTT] Disconnected");
             break;
         case MQTT_EVENT_DATA:
-            ESP_LOGI(TAG, "[MQTT] Data %.*s with %.*s", event->topic_len, event->topic, event->data_len, event->data);
+            memset(topic, 0, DEFAULT_BUF_SIZE);
+            strncpy(topic, event->topic, event->topic_len);
 
-            ESP_LOGI(TAG, "Topic %d", strcmp(event->topic, MQTT_SET_TOPIC));
-            if (strcmp(event->topic, MQTT_SET_TOPIC) == 0) {
-                 // handle_esp_event(event)
+            memset(data, 0, DEFAULT_BUF_SIZE);
+            strncpy(data, event->data, event->data_len);
+
+            ESP_LOGI(TAG, "[MQTT] Data %s with %s", topic, data);
+
+            if (strcmp(topic, MQTT_SET_TOPIC) == 0) {
+                handle_esp_event(data);
                 char *json = serialize_esp_state(current_state);
                 ESP_LOGI(TAG, "[MQTT] Publish data %.*s", strlen(json), json);
                 esp_mqtt_client_publish(client, MQTT_STATE_TOPIC, json, 0, 2, 0);
@@ -175,14 +184,9 @@ static void mqtt_app_start(void)
             .uri = CONFIG_MQTT_URI,
             .event_handle = mqtt_event_handler,
             .cert_pem = (const char *)ca_cert_pem_start,
-//            .client_cert_pem = (const char *)client_cert_pem_start,
-//            .client_key_pem = (const char *)client_key_pem_start,
-//            .use_global_ca_store = true,
+            .client_cert_pem = (const char *)client_cert_pem_start,
+            .client_key_pem = (const char *)client_key_pem_start,
     };
-
-//    char *cert = (char *)client_cert_pem_start;
-//    esp_tls_init_global_ca_store();
-//    esp_tls_set_global_ca_store((const unsigned char *)cert, (const unsigned int)strlen(cert));
 
     esp_mqtt_client_handle_t client = esp_mqtt_client_init(&mqtt_cfg);
     esp_mqtt_client_start(client);
