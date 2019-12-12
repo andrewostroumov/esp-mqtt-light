@@ -6,7 +6,6 @@
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
 #include <cJSON.h>
-#include <driver/gpio.h>
 #include <driver/ledc.h>
 
 #include "esp_system.h"
@@ -44,13 +43,13 @@ int DEFAULT_STATE_BRIGHTNESS = 255;
 
 static int wifi_retry_num = 0;
 
-typedef struct esp_state_t {
+typedef struct {
     bool *power;
     int *brightness;
     int *effect;
-} *esp_state;
+} esp_state_t;
 
-esp_state current_state;
+esp_state_t current_state = {};
 
 ledc_timer_config_t ledc_timer = {
         .duty_resolution = LEDC_TIMER_8_BIT, // resolution of PWM duty
@@ -70,16 +69,7 @@ ledc_channel_config_t ledc_channel = {
         .intr_type  = LEDC_INTR_FADE_END
 };
 
-esp_state build_esp_state() {
-    esp_state state = malloc(sizeof(struct esp_state_t));
-    state->power = NULL;
-    state->brightness = NULL;
-    state->effect = NULL;
-
-    return state;
-}
-
-char * serialize_esp_state(esp_state state) {
+char * serialize_esp_state(esp_state_t *state) {
     char *json = NULL;
     cJSON *root = cJSON_CreateObject();
 //    cJSON_AddStringToObject(root, "uniq_id", "ffffffffffffffff");
@@ -107,7 +97,7 @@ char * serialize_esp_state(esp_state state) {
     return json;
 }
 
-void deserialize_esp_state(esp_state state, char *json) {
+void deserialize_esp_state(esp_state_t *state, char *json) {
     cJSON *root = cJSON_Parse(json);
 
     cJSON *power = cJSON_GetObjectItem(root, "state");
@@ -145,26 +135,23 @@ bool has_esp_state_file() {
 ////    char *json = serialize_esp_state(state);
 //}
 
-esp_err_t load_esp_state(esp_state state) {
+esp_err_t load_esp_state(esp_state_t *state) {
     bool has = has_esp_state_file();
 
     if (has) {
-        char *json = "{\"power\":\"ON\",\"brightness\":255}";
+        char *json = "{\"state\":\"ON\",\"brightness\":255}";
         deserialize_esp_state(state, json);
     } else {
-        bool *power = (bool *) malloc(sizeof(int));
-        state->power = power;
-        *state->power = true;
-
-        int *brightness = (int *) malloc(sizeof(int));
-        state->brightness = brightness;
-        *state->brightness = 255;
+        state->power = (bool*)malloc(sizeof(int));;
+        *state->power = DEFAULT_STATE_POWER;
+        state->brightness = (int*)malloc(sizeof(int));
+        *state->brightness = DEFAULT_STATE_BRIGHTNESS;
     }
 
     return ESP_OK;
 }
 
-esp_err_t apply_esp_state(esp_state state) {
+esp_err_t apply_esp_state(esp_state_t *state) {
     if (state->power) {
         if (!*state->power) {
             ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, 0);
@@ -185,7 +172,7 @@ esp_err_t apply_esp_state(esp_state state) {
     return ESP_OK;
 }
 
-int handle_esp_event(esp_state state, char *data) {
+int handle_esp_event(esp_state_t *state, char *data) {
     deserialize_esp_state(state, data);
     apply_esp_state(state);
     return EXIT_SUCCESS;
@@ -214,8 +201,8 @@ static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event)
             ESP_LOGI(TAG, "[MQTT] Data %s with %s", topic, data);
 
             if (strcmp(topic, MQTT_SET_TOPIC) == 0) {
-                handle_esp_event(current_state, data);
-                char *json = serialize_esp_state(current_state);
+                handle_esp_event(&current_state, data);
+                char *json = serialize_esp_state(&current_state);
                 ESP_LOGI(TAG, "[MQTT] Publish data %.*s", strlen(json), json);
                 esp_mqtt_client_publish(client, MQTT_STATE_TOPIC, json, 0, 2, 0);
             }
@@ -330,17 +317,16 @@ void app_main()
     ledc_channel_config(&ledc_channel);
     ledc_fade_func_install(0);
 
-    current_state = build_esp_state();
-    esp_err_t error = load_esp_state(current_state);
+    esp_err_t error = load_esp_state(&current_state);
 
     if (error != ESP_OK) {
         ESP_LOGI(TAG, "[APP] Load state error %d", error);
     }
 
-    apply_esp_state(current_state);
+    apply_esp_state(&current_state);
 
     // TODO: use function to dump data instead of serialize
-    char *printed_state = serialize_esp_state(current_state);
+    char *printed_state = serialize_esp_state(&current_state);
     ESP_LOGI(TAG, "[APP] Current state: %s", printed_state);
 
 //    gpio_config_t io_conf;
