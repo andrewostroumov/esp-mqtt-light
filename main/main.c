@@ -72,7 +72,7 @@ ledc_channel_config_t ledc_channel = {
 char * serialize_esp_state(esp_state_t *state) {
     char *json = NULL;
     cJSON *root = cJSON_CreateObject();
-//    cJSON_AddStringToObject(root, "uniq_id", "ffffffffffffffff");
+    cJSON_AddNumberToObject(root, "free_heap_size", esp_get_free_heap_size());
 
     if (state->power) {
         if (*state->power) {
@@ -205,6 +205,7 @@ static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event)
                 char *json = serialize_esp_state(&current_state);
                 ESP_LOGI(TAG, "[MQTT] Publish data %.*s", strlen(json), json);
                 esp_mqtt_client_publish(client, MQTT_STATE_TOPIC, json, 0, 2, 0);
+                free(json);
             }
             break;
         default:
