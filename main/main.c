@@ -32,13 +32,17 @@ const char *STATE_POWER_ON = "ON";
 const char *STATE_POWER_OFF = "OFF";
 const char *MQTT_SET_TOPIC = "discovery/light/esp32_yellow_garland/set";
 const char *MQTT_STATE_TOPIC = "discovery/light/esp32_yellow_garland/state";
+const char *MQTT_STATUS_TOPIC = "discovery/light/esp32_yellow_garland/status";
+const char *MQTT_ATTRS_TOPIC = "discovery/light/esp32_yellow_garland/attributes";
 
 bool DEFAULT_STATE_POWER = true;
 int DEFAULT_STATE_BRIGHTNESS = 255;
 
 #define WIFI_MAXIMUM_RETRY 15
 #define DEFAULT_BUF_SIZE 1024
-#define GPIO_OUTPUT_IO 19
+#define GPIO_RED_IO 17
+#define GPIO_GREEN_IO 18
+#define GPIO_BLUE_IO 19
 #define GPIO_OUTPUT_PIN_SEL  1ULL<<GPIO_OUTPUT_IO
 
 static int wifi_retry_num = 0;
@@ -46,23 +50,46 @@ static int wifi_retry_num = 0;
 typedef struct {
     bool *power;
     int *brightness;
+    int *red;
+    int *green;
+    int *blue;
     int *effect;
 } esp_state_t;
 
 esp_state_t current_state = {};
 
 ledc_timer_config_t ledc_timer = {
-        .duty_resolution = LEDC_TIMER_8_BIT, // resolution of PWM duty
-        .freq_hz = 5000,                      // frequency of PWM signal
-        .speed_mode = LEDC_HIGH_SPEED_MODE,           // timer mode
-        .timer_num = LEDC_TIMER_0,            // timer index
-        .clk_cfg = LEDC_AUTO_CLK,              // Auto select the source clock
+        .duty_resolution = LEDC_TIMER_8_BIT,
+        .freq_hz = 5000,
+        .speed_mode = LEDC_HIGH_SPEED_MODE,
+        .timer_num = LEDC_TIMER_0,
+        .clk_cfg = LEDC_AUTO_CLK,
 };
 
-ledc_channel_config_t ledc_channel = {
+ledc_channel_config_t ledc_red_channel = {
         .channel    = LEDC_CHANNEL_0,
         .duty       = 0,
-        .gpio_num   = GPIO_OUTPUT_IO,
+        .gpio_num   = GPIO_RED_IO,
+        .speed_mode = LEDC_HIGH_SPEED_MODE,
+        .hpoint     = 0,
+        .timer_sel  = LEDC_TIMER_0,
+        .intr_type  = LEDC_INTR_FADE_END
+};
+
+ledc_channel_config_t ledc_green_channel = {
+        .channel    = LEDC_CHANNEL_1,
+        .duty       = 0,
+        .gpio_num   = GPIO_GREEN_IO,
+        .speed_mode = LEDC_HIGH_SPEED_MODE,
+        .hpoint     = 0,
+        .timer_sel  = LEDC_TIMER_0,
+        .intr_type  = LEDC_INTR_FADE_END
+};
+
+ledc_channel_config_t ledc_blue_channel = {
+        .channel    = LEDC_CHANNEL_2,
+        .duty       = 0,
+        .gpio_num   = GPIO_BLUE_IO,
         .speed_mode = LEDC_HIGH_SPEED_MODE,
         .hpoint     = 0,
         .timer_sel  = LEDC_TIMER_0,
@@ -72,7 +99,7 @@ ledc_channel_config_t ledc_channel = {
 char * serialize_esp_state(esp_state_t *state) {
     char *json = NULL;
     cJSON *root = cJSON_CreateObject();
-    cJSON_AddNumberToObject(root, "free_heap_size", esp_get_free_heap_size());
+//    cJSON_AddNumberToObject(root, "free_heap_size", esp_get_free_heap_size());
 
     if (state->power) {
         if (*state->power) {
@@ -85,6 +112,10 @@ char * serialize_esp_state(esp_state_t *state) {
 
     if (state->brightness) {
         cJSON_AddNumberToObject(root, "brightness", *state->brightness);
+        cJSON *color = cJSON_AddObjectToObject(root, "color");
+        cJSON_AddNumberToObject(color, "r", *state->red);
+        cJSON_AddNumberToObject(color, "g", *state->green);
+        cJSON_AddNumberToObject(color, "b", *state->blue);
     }
 
     if (state->effect) {
@@ -116,6 +147,39 @@ void deserialize_esp_state(esp_state_t *state, char *json) {
         *state->brightness = brightness->valueint;
     }
 
+    cJSON *color = cJSON_GetObjectItem(root, "color");
+    if (color) {
+        cJSON *red = cJSON_GetObjectItem(color, "r");
+        if (red) {
+            if (!state->red) {
+                state->red = (int*)malloc(sizeof(int));
+            }
+
+            *state->red = red->valueint;
+        }
+
+        cJSON *green = cJSON_GetObjectItem(color, "g");
+
+        if (green) {
+            if (!state->green) {
+                state->green = (int*)malloc(sizeof(int));
+            }
+
+            *state->green = green->valueint;
+        }
+
+        cJSON *blue = cJSON_GetObjectItem(color, "b");
+
+        if (blue) {
+            if (!state->blue) {
+                state->blue = (int*)malloc(sizeof(int));
+            }
+
+            *state->blue = blue->valueint;
+        }
+
+    }
+
     cJSON *effect = cJSON_GetObjectItem(root, "effect");
     if (effect) {
         if (!state->effect) {
@@ -131,15 +195,11 @@ bool has_esp_state_file() {
     return true;
 }
 
-//void save_esp_state(esp_state state) {
-////    char *json = serialize_esp_state(state);
-//}
-
 esp_err_t load_esp_state(esp_state_t *state) {
     bool has = has_esp_state_file();
 
     if (has) {
-        char *json = "{\"state\":\"ON\",\"brightness\":255}";
+        char *json = "{\"state\":\"ON\",\"brightness\":255,\"color\":{\"r\":0,\"g\":0,\"b\":255}}";
         deserialize_esp_state(state, json);
     } else {
         state->power = (bool*)malloc(sizeof(int));;
@@ -154,19 +214,33 @@ esp_err_t load_esp_state(esp_state_t *state) {
 esp_err_t apply_esp_state(esp_state_t *state) {
     if (state->power) {
         if (!*state->power) {
-            ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, 0);
-            ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
+            ledc_set_duty(ledc_red_channel.speed_mode, ledc_red_channel.channel, 0);
+            ledc_set_duty(ledc_green_channel.speed_mode, ledc_green_channel.channel, 0);
+            ledc_set_duty(ledc_blue_channel.speed_mode, ledc_blue_channel.channel, 0);
+
+            ledc_update_duty(ledc_red_channel.speed_mode, ledc_red_channel.channel);
+            ledc_update_duty(ledc_green_channel.speed_mode, ledc_green_channel.channel);
+            ledc_update_duty(ledc_blue_channel.speed_mode, ledc_blue_channel.channel);
             return ESP_OK;
         }
     }
 
     if (state->brightness) {
-        ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, *state->brightness);
-        ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
+        double max = 255;
+        double c = *state->brightness / max;
 
-//        ledc_set_fade_with_time(ledc_channel.speed_mode, ledc_channel.channel, *state->brightness, 3000);
-//        ledc_fade_start(ledc_channel.speed_mode, ledc_channel.channel, LEDC_FADE_NO_WAIT);
-//        vTaskDelay(3000 / portTICK_PERIOD_MS);
+        ESP_LOGI(TAG, "C %f", c);
+        ESP_LOGI(TAG, "R %f", *state->red * c);
+        ESP_LOGI(TAG, "G %f", *state->green * c);
+        ESP_LOGI(TAG, "B %f", *state->blue * c);
+
+        ledc_set_duty(ledc_red_channel.speed_mode, ledc_red_channel.channel, (int)(*state->red * c));
+        ledc_set_duty(ledc_green_channel.speed_mode, ledc_green_channel.channel, (int)(*state->green * c));
+        ledc_set_duty(ledc_blue_channel.speed_mode, ledc_blue_channel.channel, (int)*state->blue * c);
+
+        ledc_update_duty(ledc_red_channel.speed_mode, ledc_red_channel.channel);
+        ledc_update_duty(ledc_green_channel.speed_mode, ledc_green_channel.channel);
+        ledc_update_duty(ledc_blue_channel.speed_mode, ledc_blue_channel.channel);
     }
 
     return ESP_OK;
@@ -188,6 +262,7 @@ static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event)
         case MQTT_EVENT_CONNECTED:
             ESP_LOGI(TAG, "[MQTT] Connected");
             esp_mqtt_client_subscribe(client, MQTT_SET_TOPIC, 2);
+            esp_mqtt_client_publish(client, MQTT_STATUS_TOPIC, "online", 0, 2, 0);
             break;
         case MQTT_EVENT_DISCONNECTED:
             ESP_LOGI(TAG, "[MQTT] Disconnected");
@@ -315,7 +390,9 @@ void app_main()
     ESP_ERROR_CHECK(esp_netif_init());
 
     ledc_timer_config(&ledc_timer);
-    ledc_channel_config(&ledc_channel);
+    ledc_channel_config(&ledc_red_channel);
+    ledc_channel_config(&ledc_green_channel);
+    ledc_channel_config(&ledc_blue_channel);
     ledc_fade_func_install(0);
 
     esp_err_t error = load_esp_state(&current_state);
@@ -352,4 +429,13 @@ void app_main()
     while (1) {
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
+
+    // TODO: create internal state
+    // update internal state when start / handle / every 5 min
+    // publish when update
+
+    // brightness: 1..255
+    // color_temp: 153..500
+    // white_value: 0..255
+    // color: {"r": 0, "g": 255, "b": 0}
 }
