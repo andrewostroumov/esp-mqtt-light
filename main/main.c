@@ -25,7 +25,7 @@
  * color: {"r": 0, "g": 255, "b": 0}
  */
 
-static EventGroupHandle_t wifi_event_group, mqtt_event_group;
+static EventGroupHandle_t wifi_event_group, mqtt_event_group, env_event_group, esp_event_group;
 static esp_mqtt_client_handle_t client;
 
 static const int CONNECTED_BIT = BIT0;
@@ -38,28 +38,26 @@ static const double wide = max_white - min_white;
 
 extern const uint8_t ca_cert_pem_start[] asm("_binary_ca_crt_start");
 extern const uint8_t ca_cert_pem_end[] asm("_binary_ca_crt_end");
-extern const uint8_t client_cert_pem_start[] asm("_binary_client_crt_start");
-extern const uint8_t client_cert_pem_end[] asm("_binary_client_crt_end");
-extern const uint8_t client_key_pem_start[] asm("_binary_client_key_start");
-extern const uint8_t client_key_pem_end[] asm("_binary_client_key_end");
 
 const char *STATE_POWER_ON = "ON";
 const char *STATE_POWER_OFF = "OFF";
-const char *MQTT_SET_TOPIC = "discovery/light/esp32_yellow_garland/set";
-const char *MQTT_STATE_TOPIC = "discovery/light/esp32_yellow_garland/state";
-const char *MQTT_STATUS_TOPIC = "discovery/light/esp32_yellow_garland/status";
-const char *MQTT_ATTRS_TOPIC = "discovery/light/esp32_yellow_garland/attributes";
+const char *MQTT_SET_TOPIC = "discovery/light/esp32_rgb_cct_led_strip/set";
+const char *MQTT_STATE_TOPIC = "discovery/light/esp32_rgb_cct_led_strip/state";
+const char *MQTT_STATUS_TOPIC = "discovery/light/esp32_rgb_cct_led_strip/status";
+const char *MQTT_ATTRS_TOPIC = "discovery/light/esp32_rgb_cct_led_strip/attributes";
 
 const char *default_state = "{\"state\":\"ON\",\"brightness\":255,\"white_value\":0,\"color_temp\":153,\"color\":{\"r\":255,\"g\":0,\"b\":0}}";
 
 #define WIFI_MAXIMUM_RETRY 15
 #define DEFAULT_BUF_SIZE   1024
 
-#define GPIO_RED_IO        17
-#define GPIO_GREEN_IO      18
-#define GPIO_BLUE_IO       19
-#define GPIO_N_WHITE_IO    22
-#define GPIO_W_WHITE_IO    23
+#define GPIO_RED_IO        18
+#define GPIO_GREEN_IO      19
+#define GPIO_BLUE_IO       17
+#define GPIO_N_WHITE_IO    23
+#define GPIO_W_WHITE_IO    22
+#define LED_FADE_MS        300
+#define LED_USE_FADE
 
 static int wifi_retry_num = 0;
 
@@ -72,9 +70,14 @@ typedef struct {
     int *green;
     int *blue;
     int *effect;
+} env_state_t;
+
+typedef struct {
+    uint32_t free_heap_size;
 } esp_state_t;
 
-esp_state_t current_state = {};
+env_state_t env_state = {};
+esp_state_t esp_state = {};
 
 ledc_timer_config_t ledc_timer = {
         .duty_resolution = LEDC_TIMER_8_BIT,
@@ -134,10 +137,26 @@ ledc_channel_config_t ledc_blue_channel = {
         .intr_type  = LEDC_INTR_FADE_END
 };
 
-char * serialize_esp_state(esp_state_t *state) {
+char * serialize_esp_state(esp_state_t* state) {
     char *json = NULL;
     cJSON *root = cJSON_CreateObject();
-    cJSON_AddNumberToObject(root, "free_heap_size", esp_get_free_heap_size());
+
+    if (state->free_heap_size) {
+        cJSON_AddNumberToObject(root, "free_heap_size", state->free_heap_size);
+    }
+
+    json = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    return json;
+}
+
+void update_esp_state(esp_state_t* state) {
+    state->free_heap_size = esp_get_free_heap_size();
+}
+
+char * serialize_env_state(env_state_t *state) {
+    char *json = NULL;
+    cJSON *root = cJSON_CreateObject();
 
     if (state->power) {
         if (*state->power) {
@@ -171,7 +190,7 @@ char * serialize_esp_state(esp_state_t *state) {
     return json;
 }
 
-void deserialize_esp_state(esp_state_t *state, char *json) {
+void deserialize_env_state(env_state_t *state, char *json) {
     cJSON *root = cJSON_Parse(json);
 
     cJSON *power = cJSON_GetObjectItem(root, "state");
@@ -250,23 +269,23 @@ void deserialize_esp_state(esp_state_t *state, char *json) {
     cJSON_Delete(root);
 }
 
-bool has_esp_state_file() {
+bool has_env_state_file() {
     return false;
 }
 
-esp_err_t load_esp_state(esp_state_t *state) {
-    bool has = has_esp_state_file();
+esp_err_t load_env_state(env_state_t *state) {
+    bool has = has_env_state_file();
 
     if (has) {
 
     } else {
-        deserialize_esp_state(state, (char*)default_state);
+        deserialize_env_state(state, (char*)default_state);
     }
 
     return ESP_OK;
 }
 
-esp_err_t apply_esp_state(esp_state_t *state) {
+esp_err_t apply_env_state(env_state_t *state) {
     if (state->power) {
         if (!*state->power) {
             ledc_set_duty(ledc_red_channel.speed_mode, ledc_red_channel.channel, 0);
@@ -293,6 +312,15 @@ esp_err_t apply_esp_state(esp_state_t *state) {
             c = *state->brightness / max_brightness;
         }
 
+#ifdef LED_USE_FADE
+        ledc_set_fade_with_time(ledc_red_channel.speed_mode, ledc_red_channel.channel, (int)(*state->red * c), LED_FADE_MS);
+        ledc_set_fade_with_time(ledc_green_channel.speed_mode, ledc_green_channel.channel, (int)(*state->green * c), LED_FADE_MS);
+        ledc_set_fade_with_time(ledc_blue_channel.speed_mode, ledc_blue_channel.channel, (int)(*state->blue * c), LED_FADE_MS);
+
+        ledc_fade_start(ledc_red_channel.speed_mode, ledc_red_channel.channel, LEDC_FADE_NO_WAIT);
+        ledc_fade_start(ledc_green_channel.speed_mode, ledc_green_channel.channel, LEDC_FADE_NO_WAIT);
+        ledc_fade_start(ledc_blue_channel.speed_mode, ledc_blue_channel.channel, LEDC_FADE_NO_WAIT);
+#else
         ledc_set_duty(ledc_red_channel.speed_mode, ledc_red_channel.channel, (int)(*state->red * c));
         ledc_set_duty(ledc_green_channel.speed_mode, ledc_green_channel.channel, (int)(*state->green * c));
         ledc_set_duty(ledc_blue_channel.speed_mode, ledc_blue_channel.channel, (int)*state->blue * c);
@@ -300,6 +328,7 @@ esp_err_t apply_esp_state(esp_state_t *state) {
         ledc_update_duty(ledc_red_channel.speed_mode, ledc_red_channel.channel);
         ledc_update_duty(ledc_green_channel.speed_mode, ledc_green_channel.channel);
         ledc_update_duty(ledc_blue_channel.speed_mode, ledc_blue_channel.channel);
+#endif
     }
 
     if (state->white) {
@@ -317,19 +346,28 @@ esp_err_t apply_esp_state(esp_state_t *state) {
             n_white = (int) (((wide - temp) / (int) (wide / 2)) * max_brightness);
         }
 
+#ifdef LED_USE_FADE
+        ledc_set_fade_with_time(ledc_n_white_channel.speed_mode, ledc_n_white_channel.channel, (int)(n_white * c), LED_FADE_MS);
+        ledc_set_fade_with_time(ledc_w_white_channel.speed_mode, ledc_w_white_channel.channel, (int)(w_white * c), LED_FADE_MS);
+
+        ledc_fade_start(ledc_n_white_channel.speed_mode, ledc_n_white_channel.channel, LEDC_FADE_NO_WAIT);
+        ledc_fade_start(ledc_w_white_channel.speed_mode, ledc_w_white_channel.channel, LEDC_FADE_NO_WAIT);
+#else
         ledc_set_duty(ledc_n_white_channel.speed_mode, ledc_n_white_channel.channel, (int)(n_white * c));
         ledc_set_duty(ledc_w_white_channel.speed_mode, ledc_w_white_channel.channel, (int)(w_white * c));
 
         ledc_update_duty(ledc_n_white_channel.speed_mode, ledc_n_white_channel.channel);
         ledc_update_duty(ledc_w_white_channel.speed_mode, ledc_w_white_channel.channel);
+#endif
     }
 
+    vTaskDelay(LED_FADE_MS / portTICK_PERIOD_MS);
     return ESP_OK;
 }
 
-int handle_esp_event(esp_state_t *state, char *data) {
-    deserialize_esp_state(state, data);
-    apply_esp_state(state);
+int handle_env_event(env_state_t *state, char *data) {
+    deserialize_env_state(state, data);
+    apply_env_state(state);
     return EXIT_SUCCESS;
 }
 
@@ -341,10 +379,12 @@ static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event)
     switch (event->event_id) {
         case MQTT_EVENT_CONNECTED:
             ESP_LOGI(TAG, "[MQTT] Connected");
+            xEventGroupSetBits(mqtt_event_group, CONNECTED_BIT);
             esp_mqtt_client_subscribe(event->client, MQTT_SET_TOPIC, 0);
             esp_mqtt_client_publish(event->client, MQTT_STATUS_TOPIC, "online", 0, 0, 0);
             break;
         case MQTT_EVENT_DISCONNECTED:
+            xEventGroupClearBits(mqtt_event_group, CONNECTED_BIT);
             ESP_LOGI(TAG, "[MQTT] Disconnected");
             break;
         case MQTT_EVENT_DATA:
@@ -357,8 +397,9 @@ static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event)
             ESP_LOGI(TAG, "[MQTT] Data %s with %s", topic, data);
 
             if (strcmp(topic, MQTT_SET_TOPIC) == 0) {
-                handle_esp_event(&current_state, data);
-                xEventGroupSetBits(mqtt_event_group, CONNECTED_BIT);
+                handle_env_event(&env_state, data);
+                xEventGroupSetBits(env_event_group, CONNECTED_BIT);
+                xEventGroupSetBits(esp_event_group, CONNECTED_BIT);
             }
             break;
         default:
@@ -368,16 +409,30 @@ static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event)
     return ESP_OK;
 }
 
-void task_mqtt_publish(void *param)
+void task_env_publish(void *param)
 {
     char *json;
 
     while(true) {
-        xEventGroupWaitBits(mqtt_event_group, CONNECTED_BIT, true, true, portMAX_DELAY);
-
-        json = serialize_esp_state(&current_state);
+        xEventGroupWaitBits(env_event_group, CONNECTED_BIT, true, true, portMAX_DELAY);
+        json = serialize_env_state(&env_state);
         ESP_LOGI(TAG, "[MQTT] Publish data %.*s", strlen(json), json);
         esp_mqtt_client_publish(client, MQTT_STATE_TOPIC, json, 0, 0, 0);
+        free(json);
+    }
+}
+
+void task_esp_publish(void *param)
+{
+    char *json;
+
+    while(true) {
+        xEventGroupWaitBits(mqtt_event_group, CONNECTED_BIT, false, true, portMAX_DELAY);
+        xEventGroupWaitBits(esp_event_group, CONNECTED_BIT, true, true, portMAX_DELAY);
+        update_esp_state(&esp_state);
+        json = serialize_esp_state(&esp_state);
+        ESP_LOGI(TAG, "[MQTT] Publish data %.*s", strlen(json), json);
+        esp_mqtt_client_publish(client, MQTT_ATTRS_TOPIC, json, 0, 0, 0);
         free(json);
     }
 }
@@ -385,13 +440,13 @@ void task_mqtt_publish(void *param)
 static void mqtt_app_start(void)
 {
     mqtt_event_group = xEventGroupCreate();
+    env_event_group = xEventGroupCreate();
+    esp_event_group = xEventGroupCreate();
 
     const esp_mqtt_client_config_t mqtt_cfg = {
             .uri = CONFIG_MQTT_URI,
             .event_handle = mqtt_event_handler,
             .cert_pem = (const char *)ca_cert_pem_start,
-            .client_cert_pem = (const char *)client_cert_pem_start,
-            .client_key_pem = (const char *)client_key_pem_start,
     };
 
     client = esp_mqtt_client_init(&mqtt_cfg);
@@ -492,27 +547,26 @@ void app_main()
     ledc_channel_config(&ledc_w_white_channel);
     ledc_fade_func_install(0);
 
-    esp_err_t error = load_esp_state(&current_state);
+    esp_err_t error = load_env_state(&env_state);
 
     if (error != ESP_OK) {
         ESP_LOGI(TAG, "[APP] Load state error %d", error);
     }
 
-    apply_esp_state(&current_state);
+    apply_env_state(&env_state);
 
     // TODO: use function to dump data instead of serialize
-    char *printed_state = serialize_esp_state(&current_state);
+    char *printed_state = serialize_env_state(&env_state);
     ESP_LOGI(TAG, "[APP] Current state: %s", printed_state);
 
     wifi_init_sta();
     xEventGroupWaitBits(wifi_event_group, CONNECTED_BIT, false, true, portMAX_DELAY);
     mqtt_app_start();
-    xTaskCreate(task_mqtt_publish, "task_mqtt_publish", 2048, NULL, 0, NULL);
 
-    // TODO: create internal state (free memory)
-    // TODO: update internal state when start / handle / every 5 min
-    // TODO: publish when update
+    xEventGroupSetBits(esp_event_group, CONNECTED_BIT);
+    xTaskCreate(task_env_publish, "task_env_publish", 2048, NULL, 0, NULL);
+    xTaskCreate(task_esp_publish, "task_esp_publish", 2048, NULL, 0, NULL);
 
-    // TODO: use local mqtt
+    // TODO: update internal state every 5 min
     // TODO: use local memory to save state
 }

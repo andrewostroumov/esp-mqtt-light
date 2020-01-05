@@ -6,5 +6,3 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(esp-mqtt-light)
 
 target_add_binary_data(${CMAKE_PROJECT_NAME}.elf "security/ca.crt" TEXT)
-target_add_binary_data(${CMAKE_PROJECT_NAME}.elf "security/client.crt" TEXT)
-target_add_binary_data(${CMAKE_PROJECT_NAME}.elf "security/client.key" TEXT)
