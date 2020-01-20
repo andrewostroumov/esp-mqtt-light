@@ -41,6 +41,8 @@ extern const uint8_t ca_cert_pem_end[] asm("_binary_ca_crt_end");
 
 const char *STATE_POWER_ON = "ON";
 const char *STATE_POWER_OFF = "OFF";
+const char *STATUS_ONLINE = "online";
+const char *STATUS_OFFLINE = "offline";
 const char *MQTT_SET_TOPIC = "discovery/light/esp32_rgb_cct_led_strip/set";
 const char *MQTT_STATE_TOPIC = "discovery/light/esp32_rgb_cct_led_strip/state";
 const char *MQTT_STATUS_TOPIC = "discovery/light/esp32_rgb_cct_led_strip/status";
@@ -381,7 +383,9 @@ static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event)
             ESP_LOGI(TAG, "[MQTT] Connected");
             xEventGroupSetBits(mqtt_event_group, CONNECTED_BIT);
             esp_mqtt_client_subscribe(event->client, MQTT_SET_TOPIC, 0);
-            esp_mqtt_client_publish(event->client, MQTT_STATUS_TOPIC, "online", 0, 0, 0);
+            esp_mqtt_client_publish(event->client, MQTT_STATUS_TOPIC, STATUS_ONLINE, 0, 0, true);
+            xEventGroupSetBits(env_event_group, CONNECTED_BIT);
+            xEventGroupSetBits(esp_event_group, CONNECTED_BIT);
             break;
         case MQTT_EVENT_DISCONNECTED:
             xEventGroupClearBits(mqtt_event_group, CONNECTED_BIT);
@@ -414,10 +418,11 @@ void task_env_publish(void *param)
     char *json;
 
     while(true) {
+        xEventGroupWaitBits(mqtt_event_group, CONNECTED_BIT, false, true, portMAX_DELAY);
         xEventGroupWaitBits(env_event_group, CONNECTED_BIT, true, true, portMAX_DELAY);
         json = serialize_env_state(&env_state);
         ESP_LOGI(TAG, "[MQTT] Publish data %.*s", strlen(json), json);
-        esp_mqtt_client_publish(client, MQTT_STATE_TOPIC, json, 0, 0, 0);
+        esp_mqtt_client_publish(client, MQTT_STATE_TOPIC, json, 0, 0, true);
         free(json);
     }
 }
@@ -432,7 +437,7 @@ void task_esp_publish(void *param)
         update_esp_state(&esp_state);
         json = serialize_esp_state(&esp_state);
         ESP_LOGI(TAG, "[MQTT] Publish data %.*s", strlen(json), json);
-        esp_mqtt_client_publish(client, MQTT_ATTRS_TOPIC, json, 0, 0, 0);
+        esp_mqtt_client_publish(client, MQTT_ATTRS_TOPIC, json, 0, 0, false);
         free(json);
     }
 }
@@ -447,6 +452,11 @@ static void mqtt_app_start(void)
             .uri = CONFIG_MQTT_URI,
             .event_handle = mqtt_event_handler,
             .cert_pem = (const char *)ca_cert_pem_start,
+            .lwt_topic = MQTT_STATUS_TOPIC,
+            .lwt_msg = STATUS_OFFLINE,
+            .lwt_qos = 0,
+            .lwt_retain = true,
+            .keepalive = 10
     };
 
     client = esp_mqtt_client_init(&mqtt_cfg);
@@ -563,10 +573,10 @@ void app_main()
     xEventGroupWaitBits(wifi_event_group, CONNECTED_BIT, false, true, portMAX_DELAY);
     mqtt_app_start();
 
-    xEventGroupSetBits(esp_event_group, CONNECTED_BIT);
     xTaskCreate(task_env_publish, "task_env_publish", 2048, NULL, 0, NULL);
     xTaskCreate(task_esp_publish, "task_esp_publish", 2048, NULL, 0, NULL);
 
     // TODO: update internal state every 5 min
     // TODO: use local memory to save state
+    // TODO: generate and store uniq id
 }
