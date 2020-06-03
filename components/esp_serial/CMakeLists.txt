@@ -1,0 +1,1 @@
+idf_component_register(SRCS "esp_serial.c" INCLUDE_DIRS "." REQUIRES nvs_flash)

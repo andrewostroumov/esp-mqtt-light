@@ -1,0 +1,1 @@
+idf_component_register(SRCS "esp_discovery.c" INCLUDE_DIRS "." REQUIRES "esp_serial" "esp_device" "json")
