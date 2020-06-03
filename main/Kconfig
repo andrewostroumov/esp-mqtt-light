@@ -11,4 +11,12 @@ menu "Configuration"
 		string "MQTT URI"
 		help
 			Enter the MQTT uri
+    config MQTT_USERNAME
+        string "MQTT USERNAME"
+        help
+            Enter the MQTT USERNAME
+    config MQTT_PASSWORD
+        string "MQTT PASSWORD"
+        help
+            Enter the MQTT PASSWORD
 endmenu
