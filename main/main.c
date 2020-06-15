@@ -31,7 +31,7 @@
 #define DEFAULT_BUF_SIZE   1024
 
 #define GPIO_RED_IO        GPIO_NUM_19
-#define GPIO_GREEN_IO      GPIO_NUM_18
+#define GPIO_GREEN_IO      GPIO_NUM_22
 #define GPIO_BLUE_IO       GPIO_NUM_17
 #define LED_FADE_MS        300
 #define LED_USE_FADE
@@ -265,6 +265,9 @@ char *serialize_env_state(env_state_t *state) {
 
     if (state->white) {
         cJSON_AddNumberToObject(root, "white_value", *state->white);
+    }
+
+    if (state->temp) {
         cJSON_AddNumberToObject(root, "color_temp", *state->temp);
     }
 
@@ -429,12 +432,7 @@ esp_err_t apply_env_state(env_state_t *state) {
         double c;
         double r, g, b;
 
-        if (*state->brightness == 1) {
-            c = 0.0;
-        } else {
-            c = *state->brightness / max_brightness;
-        }
-
+        c = *state->brightness / max_brightness;
         r = *state->red * c;
         g = *state->green * c;
         b = *state->blue * c;
