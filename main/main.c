@@ -73,7 +73,7 @@ const char *STATE_POWER_OFF = "OFF";
 static const char *STATUS_ONLINE = "online";
 static const char *STATUS_OFFLINE = "offline";
 
-const char *default_state = "{\"state\":\"ON\",\"brightness\":255,\"white_value\":0,\"color_temp\":153,\"color\":{\"r\":255,\"g\":0,\"b\":0}}";
+const char *default_state = "{\"state\":\"ON\",\"brightness\":255,\"white_value\":0,\"color_temp\":153,\"color\":{\"r\":255,\"g\":255,\"b\":255}}";
 
 static uint8_t serial_data[STORAGE_SERIAL_LENGTH];
 
@@ -427,7 +427,6 @@ esp_err_t apply_env_state(env_state_t *state) {
         }
     }
 
-
     if (state->brightness) {
         double c;
         double r, g, b;
@@ -616,10 +615,9 @@ static void mqtt_app_start(void) {
             .username = CONFIG_MQTT_USERNAME,
             .password = CONFIG_MQTT_PASSWORD,
             .event_handle = mqtt_event_handler,
-            .cert_pem = (const char *) ca_cert_pem_start,
             .lwt_topic = esp_discovery.status_topic,
             .lwt_msg = STATUS_OFFLINE,
-            .lwt_qos = 0,
+            .lwt_qos = 1,
             .lwt_retain = true,
             .keepalive = 10
     };

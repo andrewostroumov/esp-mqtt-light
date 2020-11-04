@@ -2,8 +2,8 @@
 #include "cJSON.h"
 #include "esp_discovery.h"
 
-static const char *DISCOVERY_TAG = "discovery/light";
-static const char *DEVICE_TAG = "espressif";
+static const char *DISCOVERY_TAG = "zigbee/light";
+static const char *DEVICE_TAG = "zigbee";
 
 static const char *DISCOVERY_PATH = "config";
 static const char *SET_PATH = "set";
@@ -65,21 +65,21 @@ esp_err_t esp_discovery_ensure(esp_discovery_t *discovery) {
 
     esp_serial_hex(discovery->esp_serial, &hex);
 
-    discovery->name = malloc(strlen(hex) + 1);
-    discovery->unique_id = malloc(strlen(hex) + strlen(DEVICE_TAG) + 1 + 1);
-    discovery->discovery_topic = malloc(strlen(DISCOVERY_TAG) + strlen(hex) + strlen(DISCOVERY_PATH) + 2 + 1);
-    discovery->state_topic = malloc(strlen(DEVICE_TAG) + strlen(hex) + strlen(STATE_PATH) + 2 + 1);
-    discovery->set_topic = malloc(strlen(DEVICE_TAG) + strlen(hex) + strlen(SET_PATH) + 2 + 1);
-    discovery->status_topic = malloc(strlen(DEVICE_TAG) + strlen(hex) + strlen(STATUS_PATH) + 2 + 1);
-    discovery->attributes_topic = malloc(strlen(DEVICE_TAG) + strlen(hex) + strlen(ATTRS_PATH) + 2 + 1);
+    discovery->name = malloc(strlen(hex) + 2 + 1);
+    discovery->unique_id = malloc(strlen(hex) + strlen(DEVICE_TAG) + 3 + 1);
+    discovery->discovery_topic = malloc(strlen(DISCOVERY_TAG) + strlen(hex) + strlen(DISCOVERY_PATH) + 4 + 1);
+    discovery->state_topic = malloc(strlen(DEVICE_TAG) + strlen(hex) + strlen(STATE_PATH) + 4 + 1);
+    discovery->set_topic = malloc(strlen(DEVICE_TAG) + strlen(hex) + strlen(SET_PATH) + 4 + 1);
+    discovery->status_topic = malloc(strlen(DEVICE_TAG) + strlen(hex) + strlen(STATUS_PATH) + 4 + 1);
+    discovery->attributes_topic = malloc(strlen(DEVICE_TAG) + strlen(hex) + strlen(ATTRS_PATH) + 4 + 1);
 
-    sprintf(discovery->name, "%s", hex);
-    sprintf(discovery->unique_id, "%s_%s", hex, DEVICE_TAG);
-    sprintf(discovery->discovery_topic, "%s/%s/%s", DISCOVERY_TAG, hex, DISCOVERY_PATH);
-    sprintf(discovery->state_topic, "%s/%s/%s", DEVICE_TAG, hex, STATE_PATH);
-    sprintf(discovery->set_topic, "%s/%s/%s", DEVICE_TAG, hex, SET_PATH);
-    sprintf(discovery->status_topic, "%s/%s/%s", DEVICE_TAG, hex, STATUS_PATH);
-    sprintf(discovery->attributes_topic, "%s/%s/%s", DEVICE_TAG, hex, ATTRS_PATH);
+    sprintf(discovery->name, "0x%s", hex);
+    sprintf(discovery->unique_id, "0x%s_%s", hex, DEVICE_TAG);
+    sprintf(discovery->discovery_topic, "%s/0x%s/%s", DISCOVERY_TAG, hex, DISCOVERY_PATH);
+    sprintf(discovery->state_topic, "%s/0x%s/%s", DEVICE_TAG, hex, STATE_PATH);
+    sprintf(discovery->set_topic, "%s/0x%s/%s", DEVICE_TAG, hex, SET_PATH);
+    sprintf(discovery->status_topic, "%s/0x%s/%s", DEVICE_TAG, hex, STATUS_PATH);
+    sprintf(discovery->attributes_topic, "%s/0x%s/%s", DEVICE_TAG, hex, ATTRS_PATH);
 
     free(hex);
     return ESP_OK;
