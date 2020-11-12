@@ -2,7 +2,7 @@
 #include "cJSON.h"
 #include "esp_discovery.h"
 
-static const char *DISCOVERY_TAG = "zigbee/light";
+static const char *DISCOVERY_TAG = "homeassistant/light";
 static const char *DEVICE_TAG = "zigbee";
 
 static const char *DISCOVERY_PATH = "config";
